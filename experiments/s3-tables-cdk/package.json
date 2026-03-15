@@ -1,0 +1,21 @@
+{
+  "name": "s3-tables-cdk",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-cdk/aws-s3tables-alpha": "^2.243.0-alpha.0",
+    "@aws-sdk/client-athena": "^3.1009.0",
+    "aws-cdk-lib": "^2.243.0",
+    "constructs": "^10.5.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
