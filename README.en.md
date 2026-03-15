@@ -27,11 +27,13 @@ This project explores what happens when you push S3 beyond its traditional role:
 
 | # | Pattern | Replaces | Key Insight | Status |
 |---|---------|----------|-------------|--------|
-| 1 | [**Key-Value Store**](./patterns/kv-store/) | DynamoDB | S3 object key = your key, object body = your value. Can it handle 500K keys cost-effectively? | 🔲 |
-| 2 | [**S3 as Event Store**](./patterns/event-sourcing/) | Kinesis / SQS | S3 Event Notifications as a durable, replayable event log. | 🔲 |
-| 3 | [**Litestream + SQLite**](./patterns/litestream-sqlite/) | RDS (small) | In-memory DB speed + S3 durability via [Litestream](https://github.com/benbjohnson/litestream). Fargate Spot RTO/RPO experiment. | 🔲 |
-| 4 | [**Serverless RDBMS**](./patterns/serverless-rdbms/) | RDS / Aurora | Parquet on S3 + Athena = SQL queries without a database server. If you can tolerate seconds, why pay for RDS? | 🔲 |
-| 5 | [**S3 as File I/O**](./patterns/s3-file-io/) | EBS / EFS | How does S3 API read/write compare to local filesystem? File-size-dependent performance profiling. | 🔲 |
+| 1 | **Key-Value Store** | DynamoDB | S3 object key = your key, object body = your value. Can it handle 500K keys cost-effectively? | Research done |
+| 2 | **S3 as Event Store** | Kinesis / SQS | S3 Event Notifications as a durable, replayable event log. | Research done |
+| 3 | **Litestream + SQLite** | RDS (small) | In-memory DB speed + S3 durability via [Litestream](https://github.com/benbjohnson/litestream). Fargate Spot RTO/RPO experiment. | Research done |
+| 4 | **Serverless RDBMS** | RDS / Aurora | Parquet on S3 + Athena = SQL queries without a database server. If you can tolerate seconds, why pay for RDS? | Research done |
+| 5 | **S3 as File I/O** | EBS / EFS | How does S3 API read/write compare to local filesystem? File-size-dependent performance profiling. | Research done |
+
+> PoC implementation for each pattern is in progress. Research and benchmark results so far are available in [docs/research/](./docs/research/).
 
 Each pattern is **independently deployable** — pick the one you care about and deploy it in under 10 minutes.
 
