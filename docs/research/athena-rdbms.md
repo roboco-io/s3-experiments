@@ -301,8 +301,9 @@ RDS → AWS DMS → S3 (Parquet, 파티셔닝) → Athena
 **S3 Tables**는 이 리서치의 가장 중요한 발견이다.
 
 **개요**:
-- 2024년 12월 발표, Preview로 출시 (us-east-1, us-east-2, us-west-2)
-- GA 시점은 2026년 3월 기준 미확인
+- **2024년 12월 3일 GA 출시** (Preview 아님 — 정식 출시 확인됨)
+- 초기 리전: us-east-1, us-east-2, us-west-2
+- 2026년 2월: AWS GovCloud (US-East, US-West) 확장
 - Apache Iceberg 포맷의 **관리형 테이블** — "table bucket"이라는 새로운 S3 버킷 유형
 
 **일반 S3 + Iceberg vs S3 Tables 비교**:
@@ -310,20 +311,72 @@ RDS → AWS DMS → S3 (Parquet, 파티셔닝) → Athena
 | 항목 | 일반 S3 + Iceberg | S3 Tables |
 |------|-------------------|-----------|
 | **관리** | 수동 (compaction, 스냅샷 등 직접 관리) | **완전 관리형** (자동 최적화) |
-| **성능** | 기본 성능 | **3배 빠른 쿼리**, **10배 높은 TPS** |
+| **성능** | 기본 성능 | **2~3배 빠른 쿼리**, **10배 높은 TPS** |
+| **TPS** | 읽기 5,500/s, 쓰기 3,500/s | **읽기 55,000/s, 쓰기 35,000/s** |
 | **접근 제어** | 버킷/객체 레벨 IAM | **테이블 레벨 ARN/정책** |
 | **API** | S3 객체 API | **테이블 전용 API** (CreateTable 등) |
 | **자동 최적화** | 없음 | Compaction, 스냅샷 관리, 미참조 파일 제거 |
 
 **자동 최적화 상세**:
-- **Compaction**: 소규모 Parquet 파일 자동 병합 → S3 요청 감소 → 3배 성능
+- **Compaction**: 소규모 Parquet 파일 자동 병합 → S3 요청 감소 → 2~3배 성능
 - **스냅샷 관리**: Iceberg 스냅샷 (타임 트래블) 자동 관리
 - **미참조 파일 제거**: 불필요 파일 자동 정리로 스토리지 절감
 - **Intelligent-Tiering**: 접근 패턴 기반 자동 계층화
 
 **가격**: 기본 S3 요금 적용 (추가 요금 없음)
 
-**의미**: S3 Tables는 S3+Athena 패턴을 **기본 데이터 레이크**에서 **완전 관리형 분석 데이터베이스 경험**으로 격상시킨다.
+**독립 벤치마크 (AWS 외):**
+
+| 출처 | 비교 대상 | 결과 |
+|------|----------|------|
+| Loka 블로그 | Self-managed Iceberg (최적화) | **2x 빠른 쿼리** |
+| Loka 블로그 | Self-managed Iceberg (small files) | **최대 40x 빠른 쿼리** |
+| Medium 실측 | Self-managed Iceberg MERGE p95 | **2~4x 빠름** |
+| AWS 블로그 TPC-DS | Compaction 전후 비교 | Query 77: 55.79s → 19.91s (2.8x) |
+
+**Compaction 지연 문제 (Onehouse 블로그 보고):**
+- 백그라운드 compaction 시작까지 **2.5~3시간 대기** 필요
+- Compaction 전 최근 데이터 쿼리 시 small file 문제로 성능 저하
+- 비용이 예상보다 **20배 높을 수 있다**는 경고
+- **주의:** AWS 공식 벤치마크는 compaction 완료 후 최적 상태 기준
+
+**Cold Start 응답 속도:**
+- S3 Tables 전용 cold start 벤치마크: **공개 수치 없음** (2026년 3월 기준)
+- 기반 S3 특성상 추정: 첫 요청 50~100ms+, Athena cold start는 별도로 수 초~60초
+- Compaction 미완료 시: small file 문제로 **수십 초~분 단위** 추가 지연 가능
+
+**프로그래밍 방식 벤치마크 제약:**
+- S3 Tables를 Athena에서 쿼리하려면 **Lake Formation 통합이 필수** (AWS 콘솔에서 수동 설정)
+- 카탈로그 이름 형식: `s3tablescatalog/<bucket-name>` — Glue `create_catalog` API에서 슬래시 포함 이름 불가
+- boto3를 통한 완전 자동화 벤치마크는 현재 불가능 — 콘솔 통합 후 Athena 쿼리로 접근해야 함
+
+**의미**: S3 Tables는 S3+Athena 패턴을 **기본 데이터 레이크**에서 **완전 관리형 분석 데이터베이스 경험**으로 격상시킨다. 단, compaction 지연, 비용 구조, Lake Formation 의존성은 실 운영 시 반드시 검증 필요.
+
+### 6.5 실측 벤치마크: Regular S3 + Iceberg + Athena (2026-03-15)
+
+> 실제 AWS us-east-1 환경에서 측정. 1,000행 Iceberg 테이블, 4개 쿼리 유형, 각 5회 실행 (첫 회 = cold start).
+> 실험 코드: [experiments/s3-tables/](../../experiments/s3-tables/)
+
+**Cold Start vs Warm 쿼리 지연 (3회 실행 평균):**
+
+| 쿼리 | Cold Start (ms) | Warm avg (ms) | Warm p50 (ms) | 비고 |
+|------|---------------|-------------|-------------|------|
+| `COUNT(*)` | **1,723~1,946** | 2,084~2,146 | 1,730~1,794 | Cold와 warm 차이 미미 |
+| `WHERE filter` | **1,719~3,070** | 1,895~2,729 | 1,826~2,438 | Cold에서 변동 큼 |
+| `GROUP BY agg` | **1,744~3,006** | 2,108~2,453 | 1,844~2,476 | |
+| `ORDER BY` | **1,735~2,950** | 1,758~2,732 | 1,742~3,038 | |
+
+**핵심 발견:**
+
+1. **Cold Start ≈ Warm:** 소규모 데이터(1,000행)에서는 cold start와 warm 쿼리 지연 차이가 거의 없음. 둘 다 **~1.7~3초** 범위.
+2. **최소 지연 ~1.7초:** 가장 단순한 `COUNT(*)` 쿼리도 1.7초 이상. 이것이 Athena의 **쿼리 초기화 오버헤드** (queue + planning + engine startup).
+3. **변동성 높음:** 같은 쿼리도 1.7초~3초로 변동. 공유 인프라 특성상 p95 예측이 어려움.
+4. **소규모 데이터에서의 비효율:** 1,000행 테이블도 최소 1.7초 — OLTP 워크로드에 절대 부적합한 이유 실증.
+
+**S3 Tables 예상 성능 (리서치 기반 추정):**
+- AWS 벤치마크: Regular Iceberg 대비 **2~3x 빠른 쿼리**
+- 위 실측 기준: Warm ~2초 → S3 Tables 예상 **~0.7~1초**
+- 단, compaction 완료 전에는 성능 이점 미미
 
 ---
 
