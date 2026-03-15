@@ -1,6 +1,6 @@
 # S3 Experiments — S3で他に何ができる？
 
-[English](./README.md) | [한국어](./README.ko.md) | **日本語**
+[English](./README.en.md) | [한국어](./README.md) | **日本語**
 
 > S3が単なるストレージではないとしたら？ S3を**Key-Valueストア**、**イベントストア**、**耐久性RDBMS（Litestream+SQLite）**、**サーバーレスRDBMS（Athena）**、**ファイルI/O代替**として活用する方法を探求します — 動作するコード、CDKデプロイ、専用AWSサービスとの正直なベンチマーク付き。
 
