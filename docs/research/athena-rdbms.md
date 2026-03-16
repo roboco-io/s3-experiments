@@ -400,13 +400,23 @@ INSERT 성능 비교 (1,000행, 200행씩 5배치):
 - S3 Tables: 평균 **~4.5초/배치**
 - Regular Iceberg: 평균 **~3.0초/배치** (S3 Tables가 **1.5x 느림**)
 
-**핵심 발견 (2회 실측 일관): Compaction 전 S3 Tables는 Regular Iceberg보다 느리다!**
+**실측 Run 3 (2026-03-17, 깨끗한 환경):**
 
-- Warm 쿼리: S3 Tables가 **일관되게 1.2~1.4x 느림**
-- Cold start: S3 Tables가 **대부분 1.1~1.8x 느림** (ORDER BY cold만 예외)
+| 쿼리 | S3 Tables Cold | S3 Tables Warm | Regular Cold | Regular Warm | Cold 비율 | Warm 비율 |
+|------|---------------|---------------|-------------|-------------|----------|----------|
+| COUNT(*) | 3,111ms | 1,968ms | 3,178ms | 2,058ms | **0.98x** | **0.96x** |
+| WHERE | 1,942ms | 2,506ms | 2,986ms | 2,078ms | **0.65x** | 1.21x |
+| GROUP BY | 2,054ms | 2,897ms | 1,740ms | 2,415ms | 1.18x | 1.20x |
+| ORDER BY | 3,145ms | 2,572ms | 1,750ms | 2,058ms | 1.80x | 1.25x |
+
+**핵심 발견 (3회 실측 종합): Compaction 전 S3 Tables는 Regular Iceberg와 비슷하거나 약간 느리다**
+
+- 3회 평균 warm 비율: **~1.1~1.3x** (Run 1: 1.0~1.6x, Run 2: 1.2~1.4x, Run 3: 0.96~1.25x)
+- Run 3에서 COUNT(*) warm이 **0.96x (S3 Tables가 약간 빠름)** — 개선 경향
+- **Athena 공유 인프라의 변동성이 매우 큼** — 단일 실행으로 결론 짓기 어려움
 - S3 Tables의 자동 compaction은 **2.5~3시간 후** 시작 (Onehouse 보고)
 - AWS 공식 "3x 빠른 쿼리"는 **compaction 완료 후 최적 상태** 기준
-- **실 운영 시사점:** 데이터 삽입 후 즉시 쿼리하는 사용 사례에서는 S3 Tables의 이점이 없으며, 오히려 성능 저하
+- **실 운영 시사점:** Compaction 전에는 S3 Tables와 Regular Iceberg의 성능 차이가 미미하거나 S3 Tables가 약간 느림. Compaction 후의 성능 이점을 활용하려면 데이터 적재 후 충분한 시간(3시간+) 대기 필요
 
 **Lake Formation 통합 절차 (프로그래밍 방식, 실증 완료):**
 1. Table Bucket + Namespace + Table 생성 (s3tables API)
