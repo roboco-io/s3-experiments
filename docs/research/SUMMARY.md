@@ -214,3 +214,4 @@
 | [litestream-sqlite.md](./litestream-sqlite.md) | Litestream + SQLite + Fargate | 13KB |
 | [athena-rdbms.md](./athena-rdbms.md) | S3 + Athena Serverless RDBMS | 19KB |
 | [file-io.md](./file-io.md) | S3 API vs Filesystem I/O | 12KB |
+| [s3-tables-transactions.md](./s3-tables-transactions.md) | S3 Tables: 트랜잭션이 온다 (ACID, 벤치마크, 유즈케이스) | 신규 |
