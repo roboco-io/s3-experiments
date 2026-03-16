@@ -28,6 +28,8 @@ s3 = boto3.client("s3", region_name=REGION)
 s3tables = boto3.client("s3tables", region_name=REGION)
 athena = boto3.client("athena", region_name=REGION)
 glue = boto3.client("glue", region_name=REGION)
+lf = boto3.client("lakeformation", region_name=REGION)
+iam_client = boto3.client("iam", region_name=REGION)
 sts = boto3.client("sts", region_name=REGION)
 
 ACCOUNT_ID = sts.get_caller_identity()["Account"]
@@ -43,7 +45,7 @@ def wait_query(query_id):
         time.sleep(1)
 
 
-def run_query(sql, database=None, label=""):
+def run_query(sql, database=None, label="", catalog=None):
     """Athena 쿼리 실행 및 시간 측정"""
     params = {
         "QueryString": sql,
@@ -51,8 +53,13 @@ def run_query(sql, database=None, label=""):
             "OutputLocation": f"s3://{ATHENA_OUTPUT_BUCKET}/results/"
         },
     }
-    if database:
-        params["QueryExecutionContext"] = {"Database": database}
+    if database or catalog:
+        ctx = {}
+        if database:
+            ctx["Database"] = database
+        if catalog:
+            ctx["Catalog"] = catalog
+        params["QueryExecutionContext"] = ctx
 
     start = time.time()
     resp = athena.start_query_execution(**params)
@@ -97,9 +104,15 @@ def setup_athena_output():
     print("done")
 
 
+LF_ROLE_NAME = f"s3dd-lf-{RUN_ID}"
+CATALOG_NAME = "s3tablescatalog"
+
+
 def setup_s3_tables():
-    """S3 Table Bucket + Namespace + Table 생성"""
-    print("\n--- Setting up S3 Tables ---")
+    """S3 Table Bucket + Namespace + Table + Lake Formation 통합"""
+    print("\n--- Setting up S3 Tables + Lake Formation ---")
+
+    table_bucket_arn = f"arn:aws:s3tables:{REGION}:{ACCOUNT_ID}:bucket/{TABLE_BUCKET_NAME}"
 
     # 1. Table Bucket 생성
     print("  Creating table bucket...", end=" ", flush=True)
@@ -112,7 +125,6 @@ def setup_s3_tables():
 
     # 2. Namespace 생성
     print("  Creating namespace...", end=" ", flush=True)
-    table_bucket_arn = f"arn:aws:s3tables:{REGION}:{ACCOUNT_ID}:bucket/{TABLE_BUCKET_NAME}"
     try:
         s3tables.create_namespace(
             tableBucketARN=table_bucket_arn,
@@ -136,8 +148,126 @@ def setup_s3_tables():
         print(f"error: {e}")
         return False
 
-    # 4. Glue에서 테이블이 보이도록 카탈로그 통합 대기
-    print("  Waiting for Glue catalog integration (15s)...", end=" ", flush=True)
+    # 4. IAM Role for Lake Formation
+    print("  Creating Lake Formation IAM role...", end=" ", flush=True)
+    trust_policy = {
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "lakeformation.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }
+    try:
+        iam_client.create_role(
+            RoleName=LF_ROLE_NAME,
+            AssumeRolePolicyDocument=json.dumps(trust_policy),
+        )
+        # Inline policy for S3 Tables access
+        iam_client.put_role_policy(
+            RoleName=LF_ROLE_NAME,
+            PolicyName="S3TablesAccess",
+            PolicyDocument=json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": ["s3:GetObject*", "s3:ListBucket", "s3:GetBucket*"],
+                        "Resource": "*"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": ["s3tables:*"],
+                        "Resource": f"{table_bucket_arn}/*"
+                    }
+                ]
+            })
+        )
+        print("done")
+    except iam_client.exceptions.EntityAlreadyExistsException:
+        print("already exists")
+    except Exception as e:
+        print(f"error: {e}")
+
+    # Wait for IAM propagation
+    print("  Waiting for IAM propagation (10s)...", end=" ", flush=True)
+    time.sleep(10)
+    print("done")
+
+    lf_role_arn = f"arn:aws:iam::{ACCOUNT_ID}:role/{LF_ROLE_NAME}"
+
+    # 5. Register resource with Lake Formation (account-level ARN)
+    account_tables_arn = f"arn:aws:s3tables:{REGION}:{ACCOUNT_ID}:bucket/*"
+    print(f"  Registering with Lake Formation ({account_tables_arn})...", end=" ", flush=True)
+    try:
+        lf.register_resource(
+            ResourceArn=account_tables_arn,
+            RoleArn=lf_role_arn,
+            WithFederation=True,
+        )
+        print("done")
+    except lf.exceptions.AlreadyExistsException:
+        print("already registered")
+    except Exception as e:
+        print(f"error: {e}")
+
+    # 6. Create Glue federated catalog (s3tablescatalog is account-level global)
+    print("  Creating Glue federated catalog...", end=" ", flush=True)
+    try:
+        glue.create_catalog(
+            Name=CATALOG_NAME,
+            CatalogInput={
+                "FederatedCatalog": {
+                    "Identifier": account_tables_arn,
+                    "ConnectionName": "aws:s3tables",
+                },
+                "CreateDatabaseDefaultPermissions": [],
+                "CreateTableDefaultPermissions": [],
+            }
+        )
+        print(f"done (catalog: {CATALOG_NAME})")
+    except Exception as e:
+        err_msg = str(e)
+        if "reserved name" in err_msg or "AlreadyExists" in err_msg:
+            print("already exists (reserved global catalog)")
+        else:
+            print(f"error: {e}")
+
+    # 7. Grant permissions to current user on S3 Tables catalog
+    print("  Granting Lake Formation permissions...", end=" ", flush=True)
+    caller_arn = sts.get_caller_identity()["Arn"]
+    try:
+        # Grant on the federated catalog's database (namespace)
+        lf.grant_permissions(
+            Principal={"DataLakePrincipalIdentifier": caller_arn},
+            Resource={
+                "Database": {
+                    "CatalogId": CATALOG_NAME,
+                    "Name": NAMESPACE,
+                }
+            },
+            Permissions=["ALL"],
+            PermissionsWithGrantOption=["ALL"],
+        )
+        # Grant on all tables in the namespace
+        lf.grant_permissions(
+            Principal={"DataLakePrincipalIdentifier": caller_arn},
+            Resource={
+                "Table": {
+                    "CatalogId": CATALOG_NAME,
+                    "DatabaseName": NAMESPACE,
+                    "TableWildcard": {},
+                }
+            },
+            Permissions=["ALL"],
+            PermissionsWithGrantOption=["ALL"],
+        )
+        print("done")
+    except Exception as e:
+        print(f"error: {e}")
+
+    # Wait for catalog propagation
+    print("  Waiting for catalog propagation (15s)...", end=" ", flush=True)
     time.sleep(15)
     print("done")
 
@@ -190,7 +320,7 @@ def setup_regular_s3_iceberg():
     return True
 
 
-def insert_sample_data(database, table_path, label, row_count=1000):
+def insert_sample_data(database, table_path, label, row_count=1000, catalog=None):
     """Athena INSERT로 샘플 데이터 삽입"""
     print(f"  Inserting {row_count} rows into {label}...", end=" ", flush=True)
 
@@ -208,12 +338,12 @@ def insert_sample_data(database, table_path, label, row_count=1000):
             )
 
         insert_sql = f"INSERT INTO {table_path} VALUES {', '.join(values)}"
-        run_query(insert_sql, database=database)
+        run_query(insert_sql, database=database, catalog=catalog)
 
     print(f"done ({row_count} rows)")
 
 
-def benchmark_queries(database, table_path, label, trials=5):
+def benchmark_queries(database, table_path, label, trials=5, catalog=None):
     """Cold start + warm 쿼리 벤치마크"""
     print(f"\n  === Benchmarking: {label} ===")
 
@@ -231,7 +361,7 @@ def benchmark_queries(database, table_path, label, trials=5):
         timings = []
         for trial in range(trials):
             tag = "COLD" if trial == 0 else f"warm-{trial}"
-            result = run_query(sql, database=database, label=f"{tag}")
+            result = run_query(sql, database=database, label=f"{tag}", catalog=catalog)
             if result:
                 timings.append(result)
             if trial == 0:
@@ -303,10 +433,28 @@ def teardown():
     except Exception as e:
         print(f"error: {e}")
 
-    # Glue catalog for S3 Tables
-    print("  Deleting Glue S3 Tables catalog...", end=" ", flush=True)
+    # Glue federated catalog (skip if reserved global catalog)
+    print("  Deleting Glue federated catalog...", end=" ", flush=True)
     try:
-        glue.delete_catalog(Name=f"s3tablescatalog/{TABLE_BUCKET_NAME}")
+        glue.delete_catalog(CatalogId=CATALOG_NAME)
+        print("done")
+    except Exception as e:
+        print(f"skipped: {e}")
+
+    # Lake Formation resource deregistration
+    print("  Deregistering Lake Formation resource...", end=" ", flush=True)
+    account_tables_arn = f"arn:aws:s3tables:{REGION}:{ACCOUNT_ID}:bucket/*"
+    try:
+        lf.deregister_resource(ResourceArn=account_tables_arn)
+        print("done")
+    except Exception as e:
+        print(f"skipped: {e}")
+
+    # Lake Formation IAM role
+    print("  Deleting Lake Formation IAM role...", end=" ", flush=True)
+    try:
+        iam_client.delete_role_policy(RoleName=LF_ROLE_NAME, PolicyName="S3TablesAccess")
+        iam_client.delete_role(RoleName=LF_ROLE_NAME)
         print("done")
     except Exception as e:
         print(f"error: {e}")
@@ -363,94 +511,31 @@ def main():
         all_results["experiments"]["regular_iceberg"] = regular_results
 
     # ============================================================
-    # Phase 2: S3 Tables
+    # Phase 2: S3 Tables (Lake Formation integration done in setup)
     # ============================================================
     tables_ok = setup_s3_tables()
     if tables_ok:
-        # S3 Tables 카탈로그 통합: Glue에 카탈로그 등록
-        # 카탈로그 이름 형식: s3tablescatalog/<table-bucket-name>
-        table_bucket_arn = f"arn:aws:s3tables:{REGION}:{ACCOUNT_ID}:bucket/{TABLE_BUCKET_NAME}"
-        s3tables_catalog = f"s3tablescatalog/{TABLE_BUCKET_NAME}"
+        # Athena에서 S3 Tables 접근: catalog="s3tablescatalog", db=NAMESPACE
+        tables_table_path = f'"{NAMESPACE}"."{TABLE_NAME}"'
 
-        print(f"\n  Registering S3 Tables catalog in Glue...", end=" ", flush=True)
-        try:
-            glue.create_catalog(
-                Name=s3tables_catalog,
-                CatalogInput={
-                    "Description": "S3 Tables benchmark catalog",
-                    "FederatedCatalog": {
-                        "Identifier": table_bucket_arn,
-                    },
-                    "CatalogProperties": {
-                        "DataLakeAccessProperties": {
-                            "DataLakeAccess": True,
-                        }
-                    },
-                }
-            )
-            print(f"done (catalog: {s3tables_catalog})")
-        except glue.exceptions.AlreadyExistsException:
-            print("already exists")
-        except Exception as e:
-            print(f"error: {e}")
-            # Try alternative: the catalog may auto-register
-            print("  Trying auto-registered catalog name...", end=" ", flush=True)
-            try:
-                catalogs = athena.list_data_catalogs()
-                catalog_names = [c["CatalogName"] for c in catalogs.get("DataCatalogsSummary", [])]
-                print(f"available: {catalog_names}")
-                for name in catalog_names:
-                    if TABLE_BUCKET_NAME in name or "s3tablescatalog" in name.lower():
-                        s3tables_catalog = name
-                        break
-            except Exception as e2:
-                print(f"error: {e2}")
-
-        # Athena에서 S3 Tables 테이블 생성 (Iceberg, LOCATION 없이)
-        print("  Waiting for catalog propagation (10s)...", end=" ", flush=True)
-        time.sleep(10)
-        print("done")
-
-        # S3 Tables Iceberg 테이블에 Athena로 데이터 삽입
-        # 카탈로그 경로: "s3tablescatalog/<bucket>"."<namespace>"."<table>"
-        tables_db = f'"{s3tables_catalog}"."{NAMESPACE}"'
-        tables_table_path = f'"{s3tables_catalog}"."{NAMESPACE}"."{TABLE_NAME}"'
-
-        print(f"  S3 Tables path: {tables_table_path}")
+        print(f"\n  S3 Tables Athena path: {CATALOG_NAME}.{NAMESPACE}.{TABLE_NAME}")
 
         # 테이블 존재 확인
         print("  Checking table access...", end=" ", flush=True)
-        check_result = run_query(f"SELECT 1 FROM {tables_table_path} LIMIT 1")
+        check_result = run_query(
+            f"SELECT 1 FROM {tables_table_path} LIMIT 1",
+            catalog=CATALOG_NAME,
+        )
         if check_result and check_result["state"] == "SUCCEEDED":
-            print("accessible")
-            insert_sample_data(None, tables_table_path, "S3 Tables")
-            tables_results = benchmark_queries(None, tables_table_path, "S3 Tables")
-            all_results["experiments"]["s3_tables"] = tables_results
-        elif check_result and check_result["state"] == "FAILED":
-            print("not accessible via Athena")
-            print("  Note: S3 Tables requires Lake Formation integration.")
-            print("  Attempting CREATE TABLE in S3 Tables catalog...")
-
-            # S3 Tables에서는 CREATE TABLE 시 LOCATION 불필요
-            create_sql = f"""
-            CREATE TABLE {tables_table_path} (
-                order_id STRING,
-                customer_id STRING,
-                product STRING,
-                quantity INT,
-                price DOUBLE,
-                order_date STRING
+            print("accessible!")
+            insert_sample_data(None, tables_table_path, "S3 Tables", catalog=CATALOG_NAME)
+            tables_results = benchmark_queries(
+                None, tables_table_path, "S3 Tables", catalog=CATALOG_NAME,
             )
-            TBLPROPERTIES ('table_type' = 'ICEBERG')
-            """
-            create_result = run_query(create_sql, label="CREATE TABLE in S3 Tables")
-            if create_result and create_result["state"] == "SUCCEEDED":
-                insert_sample_data(None, tables_table_path, "S3 Tables")
-                tables_results = benchmark_queries(None, tables_table_path, "S3 Tables")
-                all_results["experiments"]["s3_tables"] = tables_results
-            else:
-                print("  S3 Tables benchmark skipped — catalog integration failed.")
-                print("  This may require manual Lake Formation setup.")
+            all_results["experiments"]["s3_tables"] = tables_results
+        else:
+            print("not accessible via Athena")
+            print("  S3 Tables benchmark skipped — Lake Formation integration may need adjustment.")
 
     # ============================================================
     # Summary

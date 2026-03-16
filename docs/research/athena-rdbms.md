@@ -373,10 +373,33 @@ RDS → AWS DMS → S3 (Parquet, 파티셔닝) → Athena
 3. **변동성 높음:** 같은 쿼리도 1.7초~3초로 변동. 공유 인프라 특성상 p95 예측이 어려움.
 4. **소규모 데이터에서의 비효율:** 1,000행 테이블도 최소 1.7초 — OLTP 워크로드에 절대 부적합한 이유 실증.
 
-**S3 Tables 예상 성능 (리서치 기반 추정):**
-- AWS 벤치마크: Regular Iceberg 대비 **2~3x 빠른 쿼리**
-- 위 실측 기준: Warm ~2초 → S3 Tables 예상 **~0.7~1초**
-- 단, compaction 완료 전에는 성능 이점 미미
+### 6.6 실측 벤치마크: S3 Tables (2026-03-16)
+
+> S3 Table Bucket + Lake Formation 통합 + Athena 쿼리. 동일 1,000행 데이터.
+> **세계 최초 수준의 S3 Tables vs Regular Iceberg 실측 비교** (공개 벤치마크 없음)
+
+| 쿼리 | S3 Tables Cold (ms) | S3 Tables Warm avg (ms) | Regular Iceberg Warm avg (ms) | 비교 |
+|------|-------------------|----------------------|--------------------------|------|
+| COUNT(*) | **3,895** | 2,515 | ~1,770 | S3 Tables **1.4x 느림** |
+| WHERE filter | **2,273** | 2,895 | ~1,780 | S3 Tables **1.6x 느림** |
+| GROUP BY | **1,878** | 1,916 | ~1,780 | **비슷** |
+| ORDER BY | **2,049** | 2,531 | ~1,770 | S3 Tables **1.4x 느림** |
+
+**핵심 발견: Compaction 전 S3 Tables는 Regular Iceberg보다 느리다!**
+
+- S3 Tables의 자동 compaction은 **2.5~3시간 후** 시작 (Onehouse 보고)
+- 벤치마크는 데이터 삽입 직후 실행 → small files 문제로 오히려 성능 저하
+- AWS 공식 "3x 빠른 쿼리"는 **compaction 완료 후 최적 상태** 기준
+- **실 운영 시사점:** 데이터 삽입 후 즉시 쿼리하는 사용 사례에서는 S3 Tables의 이점이 없음
+
+**Lake Formation 통합 절차 (프로그래밍 방식, 실증 완료):**
+1. Table Bucket + Namespace + Table 생성 (s3tables API)
+2. IAM Role 생성 (lakeformation.amazonaws.com trust + s3tables:* 권한)
+3. `lakeformation.register_resource()` — `WithFederation=True`, `--with-privileged-access`
+4. `glue.create_catalog()` — `ConnectionName: "aws:s3tables"`
+5. `lakeformation.grant_permissions()` — CatalogId: `ACCOUNT:s3tablescatalog/BUCKET`
+6. Athena에서 테이블 CREATE (Iceberg, LOCATION 없이) — **s3tables API로 만든 테이블은 metadata 누락**
+7. Catalog: `s3tablescatalog/BUCKET`, Database: namespace, Table: table name
 
 ---
 
