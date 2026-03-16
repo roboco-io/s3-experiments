@@ -378,19 +378,35 @@ RDS → AWS DMS → S3 (Parquet, 파티셔닝) → Athena
 > S3 Table Bucket + Lake Formation 통합 + Athena 쿼리. 동일 1,000행 데이터.
 > **세계 최초 수준의 S3 Tables vs Regular Iceberg 실측 비교** (공개 벤치마크 없음)
 
-| 쿼리 | S3 Tables Cold (ms) | S3 Tables Warm avg (ms) | Regular Iceberg Warm avg (ms) | 비교 |
-|------|-------------------|----------------------|--------------------------|------|
-| COUNT(*) | **3,895** | 2,515 | ~1,770 | S3 Tables **1.4x 느림** |
-| WHERE filter | **2,273** | 2,895 | ~1,780 | S3 Tables **1.6x 느림** |
-| GROUP BY | **1,878** | 1,916 | ~1,780 | **비슷** |
-| ORDER BY | **2,049** | 2,531 | ~1,770 | S3 Tables **1.4x 느림** |
+**실측 Run 1 (2026-03-16):**
 
-**핵심 발견: Compaction 전 S3 Tables는 Regular Iceberg보다 느리다!**
+| 쿼리 | S3 Tables Cold | S3 Tables Warm | Regular Cold | Regular Warm | Warm 비율 |
+|------|---------------|---------------|-------------|-------------|----------|
+| COUNT(*) | 3,895ms | 2,515ms | ~1,730ms | ~1,770ms | **1.4x 느림** |
+| WHERE | 2,273ms | 2,895ms | ~1,760ms | ~1,780ms | **1.6x 느림** |
+| GROUP BY | 1,878ms | 1,916ms | ~1,790ms | ~1,780ms | 비슷 |
+| ORDER BY | 2,049ms | 2,531ms | ~1,780ms | ~1,770ms | **1.4x 느림** |
 
+**실측 Run 2 (2026-03-16, 깨끗한 환경에서 재현):**
+
+| 쿼리 | S3 Tables Cold | S3 Tables Warm | Regular Cold | Regular Warm | Cold 비율 | Warm 비율 |
+|------|---------------|---------------|-------------|-------------|----------|----------|
+| COUNT(*) | 3,172ms | 2,899ms | 1,739ms | 2,082ms | **1.82x** | **1.39x** |
+| WHERE | 1,972ms | 2,529ms | 1,745ms | 1,780ms | 1.13x | **1.42x** |
+| GROUP BY | 3,094ms | 2,212ms | 1,741ms | 1,754ms | **1.78x** | **1.26x** |
+| ORDER BY | 2,063ms | 2,548ms | 2,990ms | 2,062ms | 0.69x | 1.24x |
+
+INSERT 성능 비교 (1,000행, 200행씩 5배치):
+- S3 Tables: 평균 **~4.5초/배치**
+- Regular Iceberg: 평균 **~3.0초/배치** (S3 Tables가 **1.5x 느림**)
+
+**핵심 발견 (2회 실측 일관): Compaction 전 S3 Tables는 Regular Iceberg보다 느리다!**
+
+- Warm 쿼리: S3 Tables가 **일관되게 1.2~1.4x 느림**
+- Cold start: S3 Tables가 **대부분 1.1~1.8x 느림** (ORDER BY cold만 예외)
 - S3 Tables의 자동 compaction은 **2.5~3시간 후** 시작 (Onehouse 보고)
-- 벤치마크는 데이터 삽입 직후 실행 → small files 문제로 오히려 성능 저하
 - AWS 공식 "3x 빠른 쿼리"는 **compaction 완료 후 최적 상태** 기준
-- **실 운영 시사점:** 데이터 삽입 후 즉시 쿼리하는 사용 사례에서는 S3 Tables의 이점이 없음
+- **실 운영 시사점:** 데이터 삽입 후 즉시 쿼리하는 사용 사례에서는 S3 Tables의 이점이 없으며, 오히려 성능 저하
 
 **Lake Formation 통합 절차 (프로그래밍 방식, 실증 완료):**
 1. Table Bucket + Namespace + Table 생성 (s3tables API)
