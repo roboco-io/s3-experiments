@@ -2,19 +2,26 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 
+export interface NetworkStackProps extends cdk.StackProps {
+  /** Explicit AZ list to avoid CDK context lookup (prevents wrong-region cache). */
+  availabilityZones?: string[];
+}
+
 export class NetworkStack extends cdk.Stack {
   public readonly vpc: ec2.Vpc;
   public readonly nfsSecurityGroup: ec2.SecurityGroup;
   public readonly clientSecurityGroup: ec2.SecurityGroup;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: NetworkStackProps) {
     super(scope, id, props);
+
+    const azs = props?.availabilityZones ?? ['us-east-1a'];
 
     // Single-AZ VPC with public subnet only — no NAT (cost), no private subnets needed.
     // EC2 client in public subnet uses public IP for SSM agent outbound.
     // S3 access via Gateway VPC endpoint (free).
     this.vpc = new ec2.Vpc(this, 'Vpc', {
-      maxAzs: 1,
+      availabilityZones: azs,
       natGateways: 0,
       subnetConfiguration: [
         {
