@@ -56,7 +56,7 @@ export class NetworkStack extends cdk.Stack {
     // Ingress: nothing — SSM Session Manager doesn't need inbound.
     this.clientSecurityGroup = new ec2.SecurityGroup(this, 'ClientSg', {
       vpc: this.vpc,
-      description: 'EC2 fio client — SSM-managed, no inbound',
+      description: 'EC2 fio client - SSM-managed, no inbound',
       allowAllOutbound: true,
     });
 

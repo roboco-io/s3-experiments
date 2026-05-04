@@ -23,7 +23,7 @@ export class StorageStack extends cdk.Stack {
     const subnet = props.vpc.publicSubnets[0];
 
     // ── Buckets ──────────────────────────────────────────────────────────
-    // A: backing store for S3 Files filesystem
+    // A: backing store for S3 Files filesystem (versioning REQUIRED by S3 Files)
     // B: target for Mountpoint for S3 (direct mount, no S3 Files in front)
     this.bucketA = new s3.Bucket(this, 'BucketA', {
       bucketName: `s3files-bench-${this.account}-a`,
@@ -31,6 +31,7 @@ export class StorageStack extends cdk.Stack {
       autoDeleteObjects: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
+      versioned: true,
     });
     this.bucketB = new s3.Bucket(this, 'BucketB', {
       bucketName: `s3files-bench-${this.account}-b`,
@@ -41,11 +42,15 @@ export class StorageStack extends cdk.Stack {
     });
 
     // ── S3 Files service role ────────────────────────────────────────────
-    // Trust: s3files.amazonaws.com may assume this role.
+    // Live test 2026-05-04: IAM rejects 's3files.amazonaws.com' as unknown
+    // service. Verified working principal is 's3.amazonaws.com' with a
+    // SourceAccount condition (then s3files create-file-system succeeds).
     // Permissions: full R/W on bucketA + bucket notification config (sync events).
     const s3FilesServiceRole = new iam.Role(this, 'S3FilesServiceRole', {
-      assumedBy: new iam.ServicePrincipal('s3files.amazonaws.com'),
-      description: 'S3 Files service access to bucketA',
+      assumedBy: new iam.ServicePrincipal('s3.amazonaws.com', {
+        conditions: { StringEquals: { 'aws:SourceAccount': this.account } },
+      }),
+      description: 'S3 Files service access to bucketA (S3 Files trust)',
     });
     this.bucketA.grantReadWrite(s3FilesServiceRole);
     s3FilesServiceRole.addToPolicy(new iam.PolicyStatement({
