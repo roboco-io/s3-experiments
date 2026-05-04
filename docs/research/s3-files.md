@@ -13,7 +13,7 @@
 3. **SageMaker Training Job 컨테이너에서 S3 Files / EFS 마운트는 구조적으로 불가능하다** (가설 H3 결정적 확인) — VPC mode·IAM·패키지 설치 어떤 방법으로도 우회 불가.
 
 ## 1. 검증 목적
-AWS S3 Files 발표가 주장한 **"활성 데이터에 대해 1ms 이하의 지연 시간"** 이 실제 ML/AI 워크로드 패턴(특히 cold cache 조건)에서 성립하는지 정량 검증. 동시에 동일 비전을 제시하는 두 선행 기술(Mountpoint for S3, EFS Standard)과 같은 평면에서 비교.
+[AWS S3 Files 발표](https://aws.amazon.com/ko/blogs/korea/launching-s3-files-making-s3-buckets-accessible-as-file-systems/)가 주장한 **"활성 데이터에 대해 1ms 이하의 지연 시간"** 이 실제 ML/AI 워크로드 패턴(특히 cold cache 조건)에서 성립하는지 정량 검증. 동시에 동일 비전을 제시하는 두 선행 기술([Mountpoint for S3](https://github.com/awslabs/mountpoint-s3), [EFS Standard](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html))과 같은 평면에서 비교.
 
 ## 2. 실험 셋업
 
@@ -27,7 +27,7 @@ AWS S3 Files 발표가 주장한 **"활성 데이터에 대해 1ms 이하의 지
 | AMI / 클라이언트 | `amazon-efs-utils 3.1.0`, `mount-s3 1.22.3`, fio 3.32 |
 | 총 셀 | 36 (3 run × 3 system × 4 profile), 30개 성공, 6개 Mountpoint 미지원으로 실패 |
 
-> **한계 명시 (R4)**: "S3 Files를 cold로 본다"는 표현은 페이지 캐시 + NFS client cache는 비웠지만 underlying EFS-backed cache는 따뜻할 수 있음을 의미한다. 진정한 S3-cold는 boto3 PUT 후 `ImportDataRules` 트리거 + cache invalidation이 필요. 본 실험은 mount-write seed 후 cold로 측정한 정직한 한계.
+> **한계 명시 (R4)**: "S3 Files를 cold로 본다"는 표현은 페이지 캐시 + NFS client cache는 비웠지만 underlying EFS-backed cache는 따뜻할 수 있음을 의미한다. 진정한 S3-cold는 boto3 PUT 후 [`ImportDataRules`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3files-filesystem-importdatarule.html) 트리거 + cache invalidation이 필요. 본 실험은 mount-write seed 후 cold로 측정한 정직한 한계.
 
 ## 3. 결과 — 지연시간 (cold-cache, 3-run median)
 
@@ -102,14 +102,14 @@ T3 (g5.xlarge GPU)는 account quota=0으로 제출 자체가 reject — 별도 S
 
 | 항목 | 결과 |
 |---|---|
-| AWS::S3Files::FileSystem **trust principal** | `elasticfilesystem.amazonaws.com` (S3 Files는 EFS 기반). `s3files.amazonaws.com`는 IAM이 unknown service로 reject. `s3.amazonaws.com`는 IAM 통과하지만 actual assume 시 `Access denied: S3 Files does not have permissions to assume the provided role` 로 ERROR state. |
+| [`AWS::S3Files::FileSystem`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3files-filesystem.html) **trust principal** | `elasticfilesystem.amazonaws.com` (S3 Files는 EFS 기반, [공식 trust policy 예시](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-files-prereq-policies.html)). `s3files.amazonaws.com`는 IAM이 unknown service로 reject. `s3.amazonaws.com`는 IAM 통과하지만 actual assume 시 `Access denied: S3 Files does not have permissions to assume the provided role` 로 ERROR state. |
 | backing S3 bucket **versioning** | 활성화 필수. 미활성 시 `aws s3files create-file-system` 거부 ("Your bucket must have versioning enabled"). |
-| trust policy 권장 조건 | `aws:SourceAccount` + `aws:SourceArn (arn:aws:s3files:region:account:file-system/*)` (Confused Deputy 방지). |
-| EFS 마운트 옵션 | CDK feature flag `aws-efs:denyAnonymousAccess`가 file-system policy에 deny anon 정책을 자동 추가 → `-o tls` 단독 마운트는 access denied. **`-o tls,iam` 사용 필수**. |
-| Mountpoint 1.22+ 옵션 | legacy `--no-cache` 플래그 제거됨. v1.22+ 기본이 client cache 없음. 캐시를 명시적으로 켜려면 `--cache <dir>`. |
-| Mountpoint POSIX 한계 | 본 실험에서 P3 (`mkdir -p` for new prefix) 와 P4 (`unlink` for fio rewrites) 모두 fio가 `Operation not permitted`로 실패. Mountpoint는 새 디렉토리 생성/언링크 미지원. **append/random write를 요구하는 워크로드는 사실상 불가**. |
-| AWS CLI 버전 | `aws s3files` 서브커맨드는 **CLI 2.34.41+** 필요. 2.26.1 (2025-04 빌드)에는 부재. |
-| CFN 리소스 | `AWS::S3Files::FileSystem`, `AWS::S3Files::MountTarget` 둘 다 PUBLIC LIVE. CDK aws-cdk-lib@2.252.0에 L2 construct는 미존재 → `cdk.CfnResource({ type: 'AWS::S3Files::FileSystem', ... })`로 raw 정의. |
+| trust policy 권장 조건 | `aws:SourceAccount` + `aws:SourceArn (arn:aws:s3files:region:account:file-system/*)` ([Confused Deputy 방지](https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html)). |
+| EFS 마운트 옵션 | CDK feature flag [`aws-efs:denyAnonymousAccess`](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_efs-readme.html#deny-anonymous-access)가 file-system policy에 deny anon 정책을 자동 추가 → `-o tls` 단독 마운트는 access denied. **[`-o tls,iam`](https://docs.aws.amazon.com/efs/latest/ug/efs-mount-helper.html#mounting-IAM-option) 사용 필수**. |
+| Mountpoint 1.22+ 옵션 | legacy `--no-cache` 플래그 제거됨. v1.22+ 기본이 client cache 없음. 캐시를 명시적으로 켜려면 [`--cache <dir>`](https://github.com/awslabs/mountpoint-s3/blob/main/doc/CONFIGURATION.md#caching-configuration). |
+| Mountpoint POSIX 한계 | 본 실험에서 P3 (`mkdir -p` for new prefix) 와 P4 (`unlink` for fio rewrites) 모두 fio가 `Operation not permitted`로 실패. Mountpoint는 새 디렉토리 생성/언링크 미지원 ([공식 SEMANTICS 명세](https://github.com/awslabs/mountpoint-s3/blob/main/doc/SEMANTICS.md)). **append/random write를 요구하는 워크로드는 사실상 불가**. |
+| AWS CLI 버전 | [`aws s3files`](https://docs.aws.amazon.com/cli/latest/reference/s3files/index.html) 서브커맨드는 **CLI 2.34.41+** 필요. 2.26.1 (2025-04 빌드)에는 부재. |
+| CFN 리소스 | [`AWS::S3Files::FileSystem`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3files-filesystem.html), [`AWS::S3Files::MountTarget`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3files-mounttarget.html) 둘 다 PUBLIC LIVE. CDK aws-cdk-lib@2.252.0에 L2 construct는 미존재 → `cdk.CfnResource({ type: 'AWS::S3Files::FileSystem', ... })`로 raw 정의. |
 
 ## 6. 비용 실측
 
@@ -137,9 +137,46 @@ PHASE 2 종료 직후 (2026-05-04 06:35Z) Cost Explorer 조회 결과 $0 — Cos
 
 **(3) Mountpoint for S3는 read-heavy 워크로드 한정.** P1 seq read에서 처리량 913 MiB/s로 충분히 빠르지만, P3 ckpt write와 P4 mixed에서 fio가 즉시 fail. ML 학습 데이터 로딩 (read-only) 한정으로는 좋은 선택, 하지만 학습 step의 checkpoint write까지 처리하려면 S3 Files가 필요.
 
-**(4) SageMaker Training Job에서 S3 Files는 쓸 수 없다.** SageMaker가 `FileSystemConfig`로 EFS/FSx를 attach하는 supported path를 사용해야 함. 본 실험으로 명확히 검증.
+**(4) SageMaker Training Job에서 S3 Files는 쓸 수 없다.** SageMaker가 [`FileSystemConfig`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemDataSource.html)로 EFS/FSx를 attach하는 supported path를 사용해야 함. 본 실험으로 명확히 검증.
 
 S3 Files는 **"S3의 비용 + EFS의 인터페이스"라는 설계 약속을 실측 데이터로 입증**했다 (마케팅 1ms 수치는 정직하지 않지만 본질적인 가치 명제는 맞다).
+
+## 8. 참고 자료 (References)
+
+### AWS 공식 발표 / 블로그
+- [Launching S3 Files: Making S3 Buckets Accessible as File Systems (한국어)](https://aws.amazon.com/ko/blogs/korea/launching-s3-files-making-s3-buckets-accessible-as-file-systems/)
+- [Launching S3 Files: Making S3 Buckets Accessible as File Systems (English)](https://aws.amazon.com/blogs/aws/launching-s3-files-making-s3-buckets-accessible-as-file-systems/)
+
+### S3 Files API / IaC
+- [`AWS::S3Files::FileSystem` CloudFormation Resource](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3files-filesystem.html)
+- [`AWS::S3Files::MountTarget` CloudFormation Resource](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3files-mounttarget.html)
+- [`AWS::S3Files::FileSystem.SynchronizationConfiguration` (`ImportDataRule`/`ExpirationDataRule`)](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3files-filesystem-synchronizationconfiguration.html)
+- [`aws s3files` CLI Reference](https://docs.aws.amazon.com/cli/latest/reference/s3files/index.html)
+- [Amazon S3 Files Service Authorization Reference (IAM actions, resources, condition keys)](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazons3files.html)
+
+### S3 Files IAM / 권한
+- [S3 Files prerequisite policies — trust policy + inline policy 예시](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-files-prereq-policies.html)
+- [The Confused Deputy Problem — `aws:SourceAccount`/`aws:SourceArn` 가이드](https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html)
+
+### Mountpoint for S3
+- [`awslabs/mountpoint-s3` GitHub](https://github.com/awslabs/mountpoint-s3)
+- [Mountpoint File System Semantics (POSIX 호환 매트릭스)](https://github.com/awslabs/mountpoint-s3/blob/main/doc/SEMANTICS.md)
+- [Mountpoint Configuration (캐시 옵션)](https://github.com/awslabs/mountpoint-s3/blob/main/doc/CONFIGURATION.md)
+
+### EFS / amazon-efs-utils
+- [Amazon EFS User Guide](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html)
+- [`amazon-efs-utils` GitHub](https://github.com/aws/efs-utils)
+- [EFS Mount Helper — IAM mount option (`-o iam`)](https://docs.aws.amazon.com/efs/latest/ug/efs-mount-helper.html#mounting-IAM-option)
+- [CDK aws-efs README — `denyAnonymousAccess` feature flag](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_efs-readme.html#deny-anonymous-access)
+
+### SageMaker
+- [SageMaker `FileSystemDataSource` (EFS/FSx attach)](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemDataSource.html)
+- [SageMaker Managed Spot Training](https://docs.aws.amazon.com/sagemaker/latest/dg/model-managed-spot-training.html)
+- [AWS Deep Learning Containers (DLC) — PyTorch on SageMaker](https://github.com/aws/deep-learning-containers/blob/master/available_images.md)
+
+### 비용 / 가드
+- [AWS Budgets](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html)
+- [AWS Cost Explorer (24h delay)](https://docs.aws.amazon.com/cost-management/latest/userguide/ce-what-is.html)
 
 ## 부록 — Raw 데이터 위치
 
