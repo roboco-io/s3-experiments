@@ -103,6 +103,27 @@ T3 (g5.xlarge GPU)는 account quota=0으로 제출 자체가 reject — 별도 S
 - **노트북 인스턴스 vs 트레이닝 컨테이너 보안 모델 차이**: 노트북 인스턴스는 [라이프사이클 스크립트로 `sudo mount -t nfs`가 가능](https://aws.amazon.com/blogs/machine-learning/mount-an-efs-file-system-to-an-amazon-sagemaker-notebook-with-lifecycle-configurations/)하지만 (단일-사용자 환경, 호스트 OS 직접 액세스), 트레이닝 컨테이너는 멀티-테넌시 격리 때문에 컨테이너 런타임 자체가 mount 권한을 차단한다 — 같은 IAM role이라도 결과가 다르다.
 - **결론**: S3 Files를 SageMaker 트레이닝에서 사용하려면 (a) AWS가 `FileSystemDataSource`에 S3 Files 추가하기를 기다리거나, (b) S3DataSource (FastFile/Pipe 모드)로 우회. 본 실험으로 확인한 H3은 AWS의 supported architecture와 일치하는 정상 동작이다.
 
+#### H3 보강 — SageMaker에서 S3 데이터를 쓰는 4가지 supported 경로
+
+H3은 *"in-container mount 불가"* 라는 negative result지만, AWS는 이를 우회하는 4가지 표준 경로를 제공한다. 모두 **SageMaker가 잡 시작 전 호스트 레벨에서 처리**하므로 컨테이너에 mount 권한이 필요 없다.
+
+| # | 방법 | 컨테이너에 노출되는 형태 | 시작 지연 | 디스크 사용 | 적합 |
+|---|---|---|---|---|---|
+| 1 | [`S3DataSource` — **File mode**](https://docs.aws.amazon.com/sagemaker/latest/dg/cdf-training.html) (기본) | `/opt/ml/input/data/<channel>/` (전체 다운로드 후 시작) | 데이터 크기에 비례 | 데이터셋 전체 | < 인스턴스 디스크 50%, 다회 epoch |
+| 2 | [`S3DataSource` — **FastFile mode**](https://aws.amazon.com/blogs/machine-learning/choose-the-best-data-source-for-your-amazon-sagemaker-training-job/) | `/opt/ml/input/data/<channel>/` (호스트가 만든 read-only FUSE) | **즉시** | 메타데이터만 (lazy fetch) | 데이터셋 ≫ 디스크, random access |
+| 3 | [`S3DataSource` — **Pipe mode**](https://docs.aws.amazon.com/sagemaker/latest/dg/your-algorithms-training-algo-running-container.html#your-algorithms-training-algo-running-container-trainingdata) | `/opt/ml/input/data/<channel>_<epoch>` (Unix named pipe) | 즉시 | 모델 아티팩트만 | 순차 read, TFRecord 등 |
+| 4 | [boto3 직접 호출](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html) | 사용자 코드가 직접 GetObject/PutObject | 즉시 | 사용자가 결정 | 동적 경로, 조건부, 결과 쓰기, S3 Vectors 같은 비파일 API |
+
+**선택 가이드**
+1. 데이터셋이 인스턴스 디스크 80% 미만이고 여러 epoch를 돈다 → **File mode** (가장 단순)
+2. 디스크보다 크거나 random access 패턴 → **FastFile mode** (사용자 코드는 1과 동일)
+3. 순차 스트리밍 + 매우 큰 데이터셋 → **Pipe mode**
+4. 동적/조건부 access 또는 비파일 API → **boto3** (1~3과 병행 가능)
+
+**"파일시스템 시맨틱이 꼭 필요"하면**: [`FileSystemDataSource`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemDataSource.html)로 EFS/FSx Lustre를 attach. S3 Files는 현재 미지원이므로, S3-backed 파일시스템이 필요하면 **FSx for Lustre를 S3 bucket에 [link](https://docs.aws.amazon.com/fsx/latest/LustreGuide/create-dra-linked-data-repo.html)** (lazy-load + writeback)하는 패턴이 supported 경로.
+
+**핵심**: in-container mount가 막혀 있는 것은 기능적 손실이 아니라 "표준 경로(File/FastFile/Pipe)를 써라"는 강제 가이드. FastFile/Pipe는 사용자가 직접 mount 설정하는 것보다 안전하고 빠르다. S3 Files는 EC2/ECS/EKS에서는 정상 작동하지만 SageMaker 트레이닝에서는 굳이 끼워 넣을 가치가 없다.
+
 ## 5. PHASE 2 검증된 운영 항목 (스펙 가정 vs 실제)
 
 운영자가 S3 Files를 IaC로 자동화할 때 부딪힐 함정들. 본 실험에서 실측으로 검증.

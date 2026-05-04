@@ -45,6 +45,27 @@ The "VPC mode" knob (T1 vs T2/T4) had no effect — even with subnet + NFS-2049 
 - If you need file-system semantics on S3-backed data within SageMaker, the supported path today is **EFS/FSx attached via [`FileSystemConfig`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemConfig.html) / [`FileSystemDataSource`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemDataSource.html)**, not user-space mounts. SageMaker mounts these at the host level before the container starts and exposes them at `/opt/ml/input/data/<channel>`.
 - S3 Files itself is **not** in the FileSystemDataSource type list as of 2026-05-04 (`EFS` and `FSxLustre` only). To benefit from S3 Files inside a SageMaker job, AWS would need to add it as a supported FileSystemType — this is the right place for that feature request.
 
+### The four supported paths to read S3 data from a SageMaker training container
+
+All four are platform-managed: SageMaker handles them on the host before the container starts, so the container needs no mount privilege.
+
+| # | Method | What the container sees | Startup latency | Disk usage | Best for |
+|---|---|---|---|---|---|
+| 1 | [`S3DataSource` — File mode (default)](https://docs.aws.amazon.com/sagemaker/latest/dg/cdf-training.html) | `/opt/ml/input/data/<channel>/` after full download | Proportional to dataset size | Whole dataset | Dataset < 50% of instance disk; multi-epoch training |
+| 2 | [`S3DataSource` — FastFile mode](https://aws.amazon.com/blogs/machine-learning/choose-the-best-data-source-for-your-amazon-sagemaker-training-job/) | `/opt/ml/input/data/<channel>/` (host-created read-only FUSE; lazy fetch) | **Immediate** | Metadata only | Dataset ≫ disk; random access |
+| 3 | [`S3DataSource` — Pipe mode](https://docs.aws.amazon.com/sagemaker/latest/dg/your-algorithms-training-algo-running-container.html#your-algorithms-training-algo-running-container-trainingdata) | `/opt/ml/input/data/<channel>_<epoch>` Unix named pipe | Immediate | Model artifact only | Sequential streams (TFRecord, Protobuf), very large datasets |
+| 4 | [boto3 direct calls](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html) | Whatever the user code does | Immediate | User-controlled | Dynamic/conditional reads, writing back to S3, non-file APIs (S3 Vectors etc.) |
+
+**Decision tree**
+1. Dataset < 80% of instance disk and multi-epoch → File mode (simplest)
+2. Bigger than disk OR random access → FastFile (same code as File)
+3. Sequential streaming + very large → Pipe
+4. Dynamic / write back / non-file API → boto3 (combine freely with 1–3)
+
+**If you truly need filesystem semantics**: use [`FileSystemDataSource`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemDataSource.html) with EFS or FSx Lustre. For S3-backed semantics specifically, link an FSx for Lustre filesystem to your S3 bucket via a [data repository association](https://docs.aws.amazon.com/fsx/latest/LustreGuide/create-dra-linked-data-repo.html) (lazy-load + writeback). This is the supported substitute for "S3 Files mounted in a training container" until/unless AWS adds S3 Files to the FileSystemType list.
+
+**Bottom line**: the in-container mount block is not a functional loss — it is a forcing function toward the standard paths above, which are typically faster and safer than user-managed mounts.
+
 ## Independent verification (added 2026-05-04 via Perplexity research)
 
 Three independent sources confirm the negative result is structural, not a misconfiguration of our test:
