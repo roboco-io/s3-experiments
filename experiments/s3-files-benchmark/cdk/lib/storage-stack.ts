@@ -42,15 +42,21 @@ export class StorageStack extends cdk.Stack {
     });
 
     // ── S3 Files service role ────────────────────────────────────────────
-    // Live test 2026-05-04: IAM rejects 's3files.amazonaws.com' as unknown
-    // service. Verified working principal is 's3.amazonaws.com' with a
-    // SourceAccount condition (then s3files create-file-system succeeds).
-    // Permissions: full R/W on bucketA + bucket notification config (sync events).
+    // Per AWS official docs (s3-files-prereq-policies), S3 Files (powered by
+    // EFS) uses the elasticfilesystem.amazonaws.com service principal. With
+    // SourceAccount + SourceArn conditions to prevent the Confused Deputy.
+    // Verified 2026-05-04: 's3files'/'s3.amazonaws.com' both fail at
+    // assume-role time even though IAM accepts the latter at create time.
     const s3FilesServiceRole = new iam.Role(this, 'S3FilesServiceRole', {
-      assumedBy: new iam.ServicePrincipal('s3.amazonaws.com', {
-        conditions: { StringEquals: { 'aws:SourceAccount': this.account } },
+      assumedBy: new iam.ServicePrincipal('elasticfilesystem.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': this.account },
+          ArnLike: {
+            'aws:SourceArn': `arn:aws:s3files:${this.region}:${this.account}:file-system/*`,
+          },
+        },
       }),
-      description: 'S3 Files service access to bucketA (S3 Files trust)',
+      description: 'S3 Files (EFS-backed) service access to bucketA',
     });
     this.bucketA.grantReadWrite(s3FilesServiceRole);
     s3FilesServiceRole.addToPolicy(new iam.PolicyStatement({
