@@ -17,7 +17,7 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / 'output'
 RAW_DIR = OUTPUT_DIR / 'raw'
 SUMMARY = OUTPUT_DIR / 'summary.csv'
 
-CELL_RE = re.compile(r'^(?P<run>\d+)_(?P<system>[a-z]+)_(?P<profile>p\d+_[a-z_]+)\.json$')
+CELL_RE = re.compile(r'^(?P<run>\d+)_(?P<system>[a-z0-9]+)_(?P<profile>p\d+_[a-z0-9_]+)\.json$')
 
 PERCENTILES = ['50.000000', '95.000000', '99.000000', '99.900000']
 

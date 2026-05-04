@@ -65,6 +65,10 @@
 | **S3 Standard** | **한 자릿수 ~ 두 자릿수 ms** | 객체 기반 순차 접근 |
 | **S3 Express One Zone** | **한 자릿수 ms** | 저지연 객체 접근 |
 | **EFS** | **낮은 ms (mid-ms)** | 공유 파일 시스템 |
+| **S3 Files** *(2026)* | **cold-cache 5.8 ms p50** (4 KiB random) — AWS "1 ms" 주장은 warm-cache 한정 | ML/AI 데이터셋 + 체크포인트, 비용 민감 공유 파일 시스템 |
+
+> **S3 Files 실측 비교** (2026-05-04, c6gn.xlarge, cold-cache, 3-run median):
+> 4 KiB random read p50: S3 Files 5.8ms / Mountpoint 6.5ms / EFS 7.2ms. 1 MiB seq read 처리량: S3 Files 1496 MiB/s / Mountpoint 913 MiB/s / EFS 302 MiB/s. 상세는 [`s3-files.md`](./s3-files.md).
 
 ### 2.4 랜덤 접근 패턴
 
@@ -233,7 +237,9 @@ S3 Standard ($0.023/GB) vs EBS gp3 ($0.08/GB), 차액 = $0.057/GB/월
 ### 6.2 파일 락킹 없음
 
 - EFS: POSIX 파일 락 지원, EBS: 단일 인스턴스 배타적 연결
-- S3: **네이티브 락 없음** → DynamoDB 기반 외부 락 구현 필요
+- **S3 Files** *(2026)*: NFSv4.1+ 기반이므로 **POSIX 락 (POSIX advisory lock) 자동 지원**. 본 실험에서 fio P3 (write) / P4 (mixed) 모두 정상 동작 확인.
+- **Mountpoint for S3** v1.22.3: `unlink`/`mkdir for new prefix` 미지원 → fio 등 POSIX-fully 의존 워크로드는 즉시 `Operation not permitted` 실패. 본 실험에서 P3·P4 모두 fail (실측 검증).
+- S3 (객체 API): **네이티브 락 없음** → DynamoDB 기반 외부 락 구현 필요
 - Conditional Writes (If-Match) → **단일 작성자 또는 CAS 패턴에서는 락 대체 가능**
 - 다중 작성자 append 시나리오에서는 여전히 외부 조율 필수
 
