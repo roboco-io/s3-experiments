@@ -339,3 +339,49 @@ experiments/s3-files-benchmark/
 
 ## 7. 변경 이력
 - 2026-05-04: 초안 작성 (Claude + Jung Do Hyun 인터뷰 기반)
+- 2026-05-04 (개정 1): Ralph iteration 2에서 발견한 차단 요인 검증 결과 반영. 아래 Amendment 1 참고.
+
+---
+
+## Amendment 1 — S3 Files API/CFN 검증 결과 (2026-05-04)
+
+### A1.1 검증 트리거
+Ralph iteration 2에서 `storage-stack.ts` 작성을 시도하다 "S3 Files를 CDK construct로 어떻게 정의하나"를 결정 못 하고 멈춤. 환경 AWS CLI 2.26.1에는 `s3files` 서브커맨드 부재. 사용자가 AWS CLI 2.34.41로 업그레이드 후 재검증.
+
+### A1.2 검증된 사실
+- **AWS CLI**: `aws s3files <subcommand>` 정식 등록 (CLI 2.34.41+)
+- **CloudFormation 리소스**: 두 타입 모두 PUBLIC / FULLY_MUTABLE / LIVE
+  - `AWS::S3Files::FileSystem` — 필수: `Bucket` (S3 ARN), `RoleArn` (IAM)
+  - `AWS::S3Files::MountTarget` — 필수: `FileSystemId`, `SubnetId`; 선택: `SecurityGroups`
+- **CDK L1 construct**: `aws-cdk-lib@2.252.0` 기준 `aws_s3files.CfnFileSystem`/`CfnMountTarget` 가용성 미검증, 필요 시 `cdk.CfnResource({ type: 'AWS::S3Files::FileSystem', ... })`로 raw 정의 가능
+- **공식 설명**: *"S3 Files makes S3 buckets accessible as high-performance file systems powered by EFS … sub-millisecond latencies through mount targets, supporting AI/ML workloads"*
+
+### A1.3 아키텍처 변경 사항
+
+**a) Bucket 분리 (변수 통제)**
+원안의 "S3 Files filesystem + Mountpoint용 별도 bucket"을 명시적으로 두 개의 분리된 bucket으로 변경:
+- **Bucket A** (`s3files-bench-{account}-A`) — S3 Files filesystem의 backing store
+- **Bucket B** (`s3files-bench-{account}-B`) — Mountpoint for S3가 직접 마운트할 대상
+- 같은 시드 트리를 두 bucket에 동일하게 시드 (`scripts/20_seed.sh`가 양쪽에 시드)
+- 같은 bucket을 두 인터페이스에서 동시 마운트하지 않음 (캐시·일관성 변수 오염 방지)
+
+**b) IAM 추가**
+S3 Files 서비스용 IAM Role 추가 (`storage-stack.ts`):
+- Trust: `s3files.amazonaws.com`
+- Policy: Bucket A에 대한 `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:GetBucketLocation` + KMS 권한 (KMS 사용 시)
+
+**c) MountTarget per AZ**
+`AWS::S3Files::MountTarget`을 client-stack의 EC2가 위치한 동일 AZ에 1개 생성. NFS 2049 ingress SG 부착.
+
+**d) SynchronizationConfiguration**
+`AWS::S3Files::FileSystem`의 SynchronizationConfiguration은 cold-cache 검증의 정직성에 영향:
+- **ImportDataRules**: `Trigger=ON_DIRECTORY_FIRST_ACCESS`, `Prefix=""`, `SizeLessThan=1073741824` (1GiB)
+  - cold 시나리오에서 첫 접근 시점에 import 트리거 — fio cold 측정에 부합
+- **ExpirationDataRules**: `DaysAfterLastAccess=30` (실험 단명 기간 동안 무관)
+
+### A1.4 디렉토리 변경
+- `cdk/lib/storage-stack.ts` 책임이 늘어남: bucket A, bucket B, S3 Files IAM Role, S3 Files FileSystem, S3 Files MountTarget, EFS, EFS MountTarget — 단일 파일 유지하되 함수 분리
+- `scripts/20_seed.sh` — 동일 시드를 bucket A와 bucket B에 모두 적용
+
+### A1.5 검증 누락에 대한 메모
+원 spec 작성 단계에서 "S3 Files가 CDK/CLI로 정의 가능한가"를 가정만 하고 검증하지 않음. 다음 spec부터는 brainstorm 직후 핵심 인프라 가용성을 1차로 검증할 것.
