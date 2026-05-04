@@ -29,6 +29,7 @@ const client = new ClientStack(app, 'S3FilesBenchmark-Client', {
   env,
   vpc: network.vpc,
   nfsSecurityGroup: network.nfsSecurityGroup,
+  clientSecurityGroup: network.clientSecurityGroup,
   bucketA: storage.bucketA,
   bucketB: storage.bucketB,
   s3FilesFileSystemId: storage.s3FilesFileSystemId,
