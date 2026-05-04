@@ -122,7 +122,12 @@ export class ClientStack extends cdk.Stack {
     );
 
     const clientSg = props.clientSecurityGroup ?? props.nfsSecurityGroup;
-    const spotMaxPrice = (props.spotMaxPriceUsdPerHour ?? 0.06).toString();
+    // 2026-05-04 spot prices in us-east-1c: c6gn.xlarge ~$0.078; on-demand $0.0864.
+    // maxPrice $0.10 leaves a 28% headroom over current spot, so capacity
+    // dips that bring spot to ~$0.10 still fulfill (then we pay actual spot,
+    // not maxPrice). $0.10 < on-demand → if price spikes higher, instance
+    // terminates and 50_run_all.sh resumes from checkpoint.json.
+    const spotMaxPrice = (props.spotMaxPriceUsdPerHour ?? 0.10).toString();
 
     this.launchTemplate = new ec2.LaunchTemplate(this, 'ClientLT', {
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.C6GN, ec2.InstanceSize.XLARGE),

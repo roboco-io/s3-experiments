@@ -15,7 +15,10 @@ export class NetworkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: NetworkStackProps) {
     super(scope, id, props);
 
-    const azs = props?.availabilityZones ?? ['us-east-1a'];
+    // us-east-1c chosen 2026-05-04 from describe-spot-price-history:
+    // c6gn.xlarge spot price was ~$0.078 vs $0.081 in 1a, $0.102 in 1b.
+    // (us-east-1f is cheapest at ~$0.058 but has narrower service support.)
+    const azs = props?.availabilityZones ?? ['us-east-1c'];
 
     // Single-AZ VPC with public subnet only — no NAT (cost), no private subnets needed.
     // EC2 client in public subnet uses public IP for SSM agent outbound.
