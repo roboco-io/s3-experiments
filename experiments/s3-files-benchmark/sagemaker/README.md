@@ -41,8 +41,19 @@ The "VPC mode" knob (T1 vs T2/T4) had no effect — even with subnet + NFS-2049 
 
 ## What this means for ML practitioners
 - For SageMaker training, **do not plan to mount S3 Files**. Use the SageMaker `FileSystemConfig` parameter to attach EFS/FSx — these are managed mounts handled outside the container by the platform — or use `S3DataSource` (channel input) for staged data.
-- Mountpoint for S3 (FUSE) is theoretically possible from inside the container (FUSE is userspace), but our quick install attempt failed because the binary distribution for Ubuntu/aarch64 is via `apt` repos that aren't preconfigured in DLC. A custom container with `mount-s3` baked in could work, but that defeats the "transparent S3 access" pitch.
-- If you need file-system semantics on S3-backed data within SageMaker, the supported path today is **EFS/FSx attached via `FileSystemConfig`**, not user-space mounts.
+- Mountpoint for S3 (FUSE) is **also not viable from inside a training container**: `mount-s3` requires `--cap-add SYS_ADMIN --device /dev/fuse` which SageMaker does not grant. A BYOC image with `mount-s3` baked in still fails at run time with `fuse: device not found`. Documented in [`awslabs/mountpoint-s3#707`](https://github.com/awslabs/mountpoint-s3/issues/707).
+- If you need file-system semantics on S3-backed data within SageMaker, the supported path today is **EFS/FSx attached via [`FileSystemConfig`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemConfig.html) / [`FileSystemDataSource`](https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_FileSystemDataSource.html)**, not user-space mounts. SageMaker mounts these at the host level before the container starts and exposes them at `/opt/ml/input/data/<channel>`.
+- S3 Files itself is **not** in the FileSystemDataSource type list as of 2026-05-04 (`EFS` and `FSxLustre` only). To benefit from S3 Files inside a SageMaker job, AWS would need to add it as a supported FileSystemType — this is the right place for that feature request.
+
+## Independent verification (added 2026-05-04 via Perplexity research)
+
+Three independent sources confirm the negative result is structural, not a misconfiguration of our test:
+
+1. **AWS docs** distinguish notebook instances (allow `sudo mount -t nfs` via [lifecycle configs](https://aws.amazon.com/blogs/machine-learning/mount-an-efs-file-system-to-an-amazon-sagemaker-notebook-with-lifecycle-configurations/) because they run as full single-tenant OS) from training containers (multi-tenant Docker, restricted capability set). Our test was on training containers.
+2. **GitHub issue [`awslabs/mountpoint-s3#707`](https://github.com/awslabs/mountpoint-s3/issues/707)** documents an identical `fuse: device not found, try 'modprobe fuse' first` from SageMaker, with the maintainers confirming `--cap-add SYS_ADMIN --device /dev/fuse` is required and "may not be supported when using a service like Sagemaker".
+3. **GitHub issue [`aws/sagemaker-python-sdk#2204`](https://github.com/aws/sagemaker-python-sdk/issues/2204)** reports the same EFS in-container mount failure that we observed.
+
+[BYOC documentation](https://docs.aws.amazon.com/sagemaker/latest/dg/docker-containers-adapt-your-own.html) does not provide any mechanism to opt into elevated capabilities — the SageMaker Training Toolkit can override the entry point and the framework but not the container runtime configuration. So the conclusion holds for any custom image too.
 
 ## Files
 - `train.py` — preflight + mount attempts; writes JSON report
