@@ -1,0 +1,22 @@
+# P1 — shard-seq-read
+# ML dataset shard load pattern. Most S3-friendly profile.
+# Run via: fio --output-format=json+ --output=$OUT p1_shard_seq_read.fio
+# Required env: FIO_DIR (mount point + unique seed dir), FIO_DIRECT (1 default, 0 fallback if O_DIRECT rejected)
+
+[global]
+directory=${FIO_DIR}
+direct=${FIO_DIRECT}
+ioengine=libaio
+group_reporting=1
+runtime=60
+ramp_time=30
+time_based=1
+
+[shard-seq-read]
+rw=read
+bs=1M
+size=512M
+iodepth=16
+numjobs=4
+filename_format=$jobnum/$filenum
+nrfiles=8

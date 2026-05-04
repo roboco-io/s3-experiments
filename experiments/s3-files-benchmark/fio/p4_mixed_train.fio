@@ -1,0 +1,29 @@
+# P4 — mixed-train
+# Concurrent read+write modeling a training step. Surfaces contention,
+# Mountpoint write limitations.
+# Run via: fio --output-format=json+ --output=$OUT p4_mixed_train.fio
+# Required env: FIO_DIR, FIO_DIRECT
+
+[global]
+directory=${FIO_DIR}
+direct=${FIO_DIRECT}
+ioengine=libaio
+group_reporting=1
+runtime=60
+ramp_time=30
+time_based=1
+
+[mixed-read]
+rw=randread
+bs=64K
+size=128M
+iodepth=32
+numjobs=2
+
+[mixed-write]
+rw=write
+bs=4M
+size=256M
+iodepth=2
+numjobs=1
+end_fsync=1
