@@ -75,7 +75,6 @@ def handler(event, context):
             comparisonOperator: 'GREATER_THAN',
             threshold: 100,
             thresholdType: 'PERCENTAGE',
-            notificationState: 'ALARM',
           },
           subscribers: [
             { subscriptionType: 'SNS', address: topic.topicArn },

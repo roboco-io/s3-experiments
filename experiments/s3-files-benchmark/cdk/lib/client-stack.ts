@@ -162,6 +162,8 @@ export class ClientStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'InstanceId', { value: instance.ref });
     new cdk.CfnOutput(this, 'InstanceRoleArn', { value: this.instanceRole.roleArn });
-    new cdk.CfnOutput(this, 'LaunchTemplateId', { value: this.launchTemplate.launchTemplateId });
+    new cdk.CfnOutput(this, 'LaunchTemplateId', {
+      value: this.launchTemplate.launchTemplateId ?? '',
+    });
   }
 }
