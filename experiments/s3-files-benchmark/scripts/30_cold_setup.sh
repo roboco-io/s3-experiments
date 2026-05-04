@@ -22,16 +22,15 @@ echo 3 > /proc/sys/vm/drop_caches
 case "$sys" in
   efs)
     umount -f "$mnt" || true
-    mount -t efs -o tls "$EFS_FS_ID":/ "$mnt"
+    mount -t efs -o tls,iam "$EFS_FS_ID":/ "$mnt"
     ;;
   s3files)
     umount -f "$mnt" || true
     mount -t s3files "$S3FILES_FS_ID":/ "$mnt"
     ;;
   mountpoint)
-    # mount-s3 (FUSE) needs fusermount unmount
     fusermount -u "$mnt" 2>/dev/null || umount -f "$mnt" || true
-    mount-s3 "$BUCKET_B" "$mnt" --no-cache --allow-other --region "$AWS_REGION"
+    mount-s3 "$BUCKET_B" "$mnt" --allow-other --region "$AWS_REGION"
     ;;
 esac
 
