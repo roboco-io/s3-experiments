@@ -190,18 +190,21 @@
 
 ## 4. 출처 날짜 분포
 
-| 연도 | 주요 변화 |
-|------|----------|
-| 2020.12 | S3 Strong Consistency |
-| 2023.11 | S3 Express One Zone 출시 |
-| 2024.08 | S3 Conditional Writes (If-None-Match) |
-| 2024.11 | S3 Conditional Writes (If-Match, ETag) |
-| 2024.12 | S3 Tables (Apache Iceberg) 발표 at re:Invent |
-| 2025.04 | S3 Express One Zone 가격 인하 (GET 85%, PUT 55%) |
-| 2025.07 | S3 Vectors 프리뷰 |
-| 2025.09 | EBS gp3 확장 (80K IOPS, 2,000 MB/s) |
-| 2025.12 | S3 Vectors GA, Litestream v0.5.5 |
-| 2026.02 | Athena Capacity Reservations |
+| 연도 | 주요 변화 | 공식 문서 / 발표 |
+|------|----------|---|
+| 2020.12 | S3 Strong Consistency | [AWS News Blog — Strong Read-After-Write Consistency](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/) |
+| 2023.11 | S3 Express One Zone 출시 | [AWS News Blog — New Amazon S3 Express One Zone](https://aws.amazon.com/blogs/aws/new-amazon-s3-express-one-zone-high-performance-storage-class/) |
+| 2024.08 | S3 Conditional Writes (If-None-Match) | [AWS What's New — S3 supports conditional writes](https://aws.amazon.com/about-aws/whats-new/2024/08/amazon-s3-conditional-writes/) |
+| 2024.11 | S3 Conditional Writes (If-Match, ETag) | [AWS What's New — S3 conditional writes for concurrent updates](https://aws.amazon.com/about-aws/whats-new/2024/11/amazon-s3-functionality-conditional-writes/) |
+| 2024.12 | S3 Tables (Apache Iceberg) 발표 at re:Invent | [AWS News Blog — New Amazon S3 Tables](https://aws.amazon.com/blogs/aws/new-amazon-s3-tables-storage-optimized-for-analytics-workloads/) |
+| 2025.04 | S3 Express One Zone 가격 인하 (GET 85%, PUT 55%) | [AWS What's New — S3 Express One Zone price reduction](https://aws.amazon.com/about-aws/whats-new/2025/04/amazon-s3-express-one-zone-price-reduction/) |
+| 2025.07 | S3 Vectors 프리뷰 | [AWS News Blog — Introducing Amazon S3 Vectors](https://aws.amazon.com/blogs/aws/introducing-amazon-s3-vectors-first-cloud-storage-with-native-vector-support-at-scale/) |
+| 2025.09 | EBS gp3 확장 (80K IOPS, 2,000 MB/s) | [AWS What's New — EBS gp3 maximum performance increase](https://aws.amazon.com/about-aws/whats-new/2025/09/amazon-ebs-gp3-volumes-maximum-iops-throughput/) |
+| 2025.12 | S3 Vectors GA | [AWS What's New — S3 Vectors generally available](https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-s3-vectors-generally-available/) |
+| 2025.12 | Litestream v0.5.5 | [Litestream releases](https://github.com/benbjohnson/litestream/releases) |
+| 2025.12 | `AWS::S3Files::FileSystem` CFN 리소스 등록 | [CFN docs — AWS::S3Files::FileSystem](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-s3files-filesystem.html) |
+| 2026.02 | Athena Capacity Reservations | [Athena docs — Capacity reservations](https://docs.aws.amazon.com/athena/latest/ug/capacity-management.html) |
+| 2026.04 | **S3 Files** 발표 — S3 버킷을 NFSv4.1+ 파일시스템으로 마운트 | [AWS Korea Blog (KO)](https://aws.amazon.com/ko/blogs/korea/launching-s3-files-making-s3-buckets-accessible-as-file-systems/) · [AWS News Blog (EN)](https://aws.amazon.com/blogs/aws/launching-s3-files-making-s3-buckets-accessible-as-file-systems/) |
 
 ---
 
@@ -215,3 +218,4 @@
 | [athena-rdbms.md](./athena-rdbms.md) | S3 + Athena Serverless RDBMS | 19KB |
 | [file-io.md](./file-io.md) | S3 API vs Filesystem I/O | 12KB |
 | [s3-tables-transactions.md](./s3-tables-transactions.md) | S3 Tables: 트랜잭션이 온다 (ACID, 벤치마크, 유즈케이스) | 신규 |
+| [s3-files.md](./s3-files.md) | **S3 Files vs Mountpoint vs EFS** — cold-cache 벤치마크 + SageMaker 호환성 PoC (2026-05-04 실측) | 신규 |
