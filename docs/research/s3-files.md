@@ -31,7 +31,7 @@
 
 ## 3. 결과 — 지연시간 (cold-cache, 3-run median)
 
-![Cold-cache p99 latency by system × profile](../../experiments/s3-files-benchmark/output/latency_boxplot.png)
+![Cold-cache p99 latency by system × profile](./s3-files-latency-boxplot.png)
 
 | Profile | System | p50 latency (μs) | p99 latency (μs) | Throughput (MiB/s) |
 |---|---|---:|---:|---:|
@@ -48,7 +48,7 @@
 | | mountpoint | — (unsupported) | — | — |
 | | efs | 49,545 | 72,876 | 91 |
 
-**처리량 차트**: [`output/throughput_bar.png`](../../experiments/s3-files-benchmark/output/throughput_bar.png)
+**처리량 차트**: [`s3-files-throughput-bar.png`](./s3-files-throughput-bar.png)
 
 ## 4. 가설 검증
 
